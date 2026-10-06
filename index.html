@@ -79,6 +79,9 @@ const deletedKey='isaszeg_deleted_points_v1';
 let deletedPoints=JSON.parse(localStorage.getItem(deletedKey)||'[]').map(Number);
 const deletedSet=new Set(deletedPoints);
 const existingMarkers={};
+const movedKey='isaszeg_moved_points_v1';
+const movedPoints=JSON.parse(localStorage.getItem(movedKey)||'{}');
+function saveMoved(){localStorage.setItem(movedKey,JSON.stringify(movedPoints));}
 function saveDeleted(){localStorage.setItem(deletedKey,JSON.stringify(deletedPoints));}
 function renderExistingList(){
   list.innerHTML=addresses.map((a,i)=>`<div class="addr" data-num="${nums[i]}"${deletedSet.has(nums[i])?' style="display:none"':''}><b>${nums[i]}.</b> ${a} <button class="existing-delete" data-num="${nums[i]}">🗑️</button></div>`).join('');
@@ -126,18 +129,39 @@ renderManual();
 
 function addPoint(lat,lon,n,address){
  if(deletedSet.has(n)) return;
+
+ // Korábban kézzel áthelyezett pont esetén az elmentett pozíciót használjuk.
+ if(movedPoints[n]){
+   lat=Number(movedPoints[n].lat);
+   lon=Number(movedPoints[n].lon);
+ }
+
  const dot=L.marker([lat,lon],{
-   icon:L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[8,8],iconAnchor:[4,4]}),
-   interactive:false
+   icon:L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[8,8],iconAnchor:[4,4]})
  }).addTo(map);
+
  const label=L.marker([lat,lon],{
    icon:L.divIcon({className:'',html:'<div class="marker-label">'+n+'</div>',iconSize:[32,29],iconAnchor:[-7,36]}),
-   interactive:false
+   draggable:true,
+   autoPan:true
  }).addTo(map);
+
+ const movePoint=()=>{
+   const pos=label.getLatLng();
+   dot.setLatLng(pos);
+   movedPoints[n]={lat:pos.lat,lon:pos.lng};
+   saveMoved();
+ };
+
+ label.on('drag',movePoint);
+ label.on('dragend',movePoint);
+
  existingMarkers[n]=[dot,label];
- dot.bindPopup('<b>'+n+'. '+address+'</b><br>Isaszeg');
+ dot.bindPopup('<b>'+n+'. '+address+'</b><br>Isaszeg<br><small>↔ A számozott jelölő húzható.</small>');
+ label.bindPopup('<b>'+n+'. '+address+'</b><br>Isaszeg<br><small>↔ A számozott jelölő húzható.</small>');
  bounds.push([lat,lon]);
 }
+
 document.getElementById('addManualBtn').addEventListener('click',()=>{
   const form=document.getElementById('manualForm');
   form.style.display=form.style.display==='none'?'block':'none';
