@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isaszeg – eredeti címlista, egységes jelölőkkel</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif}
+#map{height:100vh;width:100%}
+.marker-label{
+  background:#fff;border:2px solid #d71920;color:#d71920;border-radius:6px;
+  min-width:28px;height:27px;padding:0 5px;display:flex;align-items:center;
+  justify-content:center;font-weight:700;font-size:15px;line-height:23px;
+  box-shadow:0 1px 3px rgba(0,0,0,.22)
+}
+.dot{
+  width:8px;height:8px;border-radius:50%;background:#d71920;
+  border:1px solid #8f1015;box-shadow:0 0 0 1px rgba(255,255,255,.9)
+}
+#panel{
+  position:fixed;z-index:1500;right:10px;top:10px;width:340px;max-height:calc(100vh - 20px);
+  overflow:auto;background:#fff;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.28);
+  padding:14px 16px
+}
+#panel h1{font-size:19px;margin:0 0 10px}
+#panel h2{font-size:14px;margin:12px 0 7px}
+.addr{font-size:12px;line-height:1.55}
+.manual-box{margin-top:10px;padding:9px;background:#f7f7f7;border:1px solid #ddd;border-radius:6px}.manual-box button{cursor:pointer;border:1px solid #aaa;background:#fff;border-radius:4px;padding:5px 8px;margin:3px 3px 3px 0}.manual-box input{width:100%;padding:6px;border:1px solid #bbb;border-radius:4px;margin:5px 0}.manual-item{font-size:12px;line-height:1.45;padding:5px 0;border-bottom:1px solid #ddd}.manual-item:last-child{border-bottom:0}.manual-delete{color:#b51218!important}.existing-delete{cursor:pointer;border:1px solid #aaa;background:#fff;border-radius:4px;padding:2px 6px;margin-left:6px;color:#b51218}
+.status{font-size:12px;padding:7px 9px;background:#f4f4f4;border-radius:5px}.failed{font-size:12px;line-height:1.5}.failed a{color:#b51218;text-decoration:none}.failed a:hover{text-decoration:underline}
+@media print{
+  @page{size:A4 landscape;margin:0}
+  #panel{position:absolute;right:8mm;top:8mm;width:78mm;max-height:180mm;box-shadow:none;border:1px solid #bbb}
+  #map{height:210mm}
+  .leaflet-control-zoom,.leaflet-control-attribution{font-size:8px}
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+<h1>Isaszeg – eredeti címlista</h1>
+<div class="status" id="status">A 33 cím pontos geokódolása folyamatban…</div>
+<div class="manual-box">
+  <button id="addManualBtn">➕ Új cím hozzáadása</button>
+  <div id="manualForm" style="display:none">
+    <input id="manualAddress" type="text" placeholder="Pl. Kossuth Lajos utca 200">
+    <button id="placeManualBtn">📍 Hely elhelyezése a térképen</button>
+    <button id="cancelManualBtn">Mégsem</button>
+    <div id="manualHint" style="font-size:11px;color:#555;margin-top:3px"></div>
+  </div>
+  <div id="manualList"></div>
+</div>
+<h2>Számmagyarázat</h2>
+<div id="list"></div>
+<h2 id="failedTitle" style="display:none">⚠️ Ellenőrizendő tételek</h2>
+<div id="failed" class="failed"></div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const addresses=[
+'Őzgida utca 19','Március 15. utca 7','Pozsonyi utca 9','Bartók Béla utca 5',
+'Templom utca 35','Damjanich utca 14','Dózsa György utca 46','Kossuth Lajos utca 88',
+'Vadász utca 9','Belsőmajori utca 28','Toldi Miklós utca 3','Ady Endre utca 30/1',
+'Virág utca 1/a','Kossuth Lajos utca 177','Április 6. utca 82','Kassai utca 12',
+'Erdő utca 25','Április 6. utca 56','Arany János utca 1/A','Magyar utca 11',
+'Madách Imre utca 40','Belsőmajori utca 25','Kossuth Lajos utca 113','Béke utca 53',
+'Kertész utca 7/A','Madách Imre utca 50','Kossuth Lajos utca 130','Rákóczi utca 12',
+'Béke tér 24/A','Öreghegyi utca 1','Bercsényi utca 22','Rákóczi utca 11','Báthori utca 19'
+];
+const nums=addresses.map((_,i)=>i+2);
+const map=L.map('map',{zoomControl:true}).setView([47.53,19.40],13);
+L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',{
+ maxZoom:20,attribution:'© OpenStreetMap contributors, © OpenStreetMap France'
+}).addTo(map);
+const list=document.getElementById('list');
+const deletedKey='isaszeg_deleted_points_v1';
+let deletedPoints=JSON.parse(localStorage.getItem(deletedKey)||'[]').map(Number);
+const deletedSet=new Set(deletedPoints);
+const existingMarkers={};
+function saveDeleted(){localStorage.setItem(deletedKey,JSON.stringify(deletedPoints));}
+function renderExistingList(){
+  list.innerHTML=addresses.map((a,i)=>`<div class="addr" data-num="${nums[i]}"${deletedSet.has(nums[i])?' style="display:none"':''}><b>${nums[i]}.</b> ${a} <button class="existing-delete" data-num="${nums[i]}">🗑️</button></div>`).join('');
+  list.querySelectorAll('.existing-delete').forEach(btn=>btn.addEventListener('click',()=>{
+    const n=Number(btn.dataset.num);
+    const idx=deletedPoints.indexOf(n);
+    if(confirm('Biztosan törlöd a '+n+'. pontot?')){
+      if(idx<0){deletedPoints.push(n); deletedSet.add(n); saveDeleted();}
+      if(existingMarkers[n]){existingMarkers[n].forEach(m=>map.removeLayer(m)); delete existingMarkers[n];}
+      const row=list.querySelector('.addr[data-num="'+n+'"]'); if(row) row.remove();
+    }
+  }));
+}
+renderExistingList();
+const bounds=[]; let done=0; const failed=[];
+const manualKey='isaszeg_new_points_v1';
+let manualPoints=JSON.parse(localStorage.getItem(manualKey)||'[]');
+let manualPlacement=false;
+let manualPendingAddress='';
+let manualNextNumber=Math.max(...nums,0)+1;
+const manualLayer=L.layerGroup().addTo(map);
+function esc(s){return String(s).replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));}
+function saveManual(){localStorage.setItem(manualKey,JSON.stringify(manualPoints));}
+function addManualMarker(p){
+  const dot=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[8,8],iconAnchor:[4,4]})}).addTo(manualLayer);
+  const label=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="marker-label">'+p.num+'</div>',iconSize:[32,29],iconAnchor:[-7,36]})}).addTo(manualLayer);
+  dot.bindPopup('<b>'+esc(p.num)+'. '+esc(p.address)+'</b><br>Manuálisan elhelyezve');
+  label.bindPopup('<b>'+esc(p.num)+'. '+esc(p.address)+'</b><br>Manuálisan elhelyezve');
+  return [dot,label];
+}
+function renderManual(){
+  manualLayer.clearLayers();
+  const box=document.getElementById('manualList');
+  if(!manualPoints.length){box.innerHTML='';return;}
+  box.innerHTML='<h2 style="margin:10px 0 5px">Manuálisan hozzáadott címek</h2>'+manualPoints.map((p,i)=>'<div class="manual-item"><b>'+p.num+'.</b> '+esc(p.address)+' <button class="manual-delete" data-index="'+i+'">🗑️ Törlés</button></div>').join('');
+  manualPoints.forEach(addManualMarker);
+  box.querySelectorAll('.manual-delete').forEach(btn=>btn.addEventListener('click',()=>{
+    const i=Number(btn.dataset.index);
+    if(confirm('Biztosan törlöd a '+manualPoints[i].num+'. pontot?')){
+      manualPoints.splice(i,1); saveManual(); renderManual();
+    }
+  }));
+}
+renderManual();
+
+function addPoint(lat,lon,n,address){
+ if(deletedSet.has(n)) return;
+ const dot=L.marker([lat,lon],{
+   icon:L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[8,8],iconAnchor:[4,4]}),
+   interactive:false
+ }).addTo(map);
+ const label=L.marker([lat,lon],{
+   icon:L.divIcon({className:'',html:'<div class="marker-label">'+n+'</div>',iconSize:[32,29],iconAnchor:[-7,36]}),
+   interactive:false
+ }).addTo(map);
+ existingMarkers[n]=[dot,label];
+ dot.bindPopup('<b>'+n+'. '+address+'</b><br>Isaszeg');
+ bounds.push([lat,lon]);
+}
+document.getElementById('addManualBtn').addEventListener('click',()=>{
+  const form=document.getElementById('manualForm');
+  form.style.display=form.style.display==='none'?'block':'none';
+  if(form.style.display==='block') document.getElementById('manualAddress').focus();
+});
+document.getElementById('cancelManualBtn').addEventListener('click',()=>{
+  manualPlacement=false; manualPendingAddress='';
+  document.getElementById('manualForm').style.display='none';
+  document.getElementById('manualHint').textContent='';
+});
+document.getElementById('placeManualBtn').addEventListener('click',async()=>{
+  const a=document.getElementById('manualAddress').value.trim();
+  if(!a){alert('Írd be a címet.');return;}
+  manualPendingAddress=a;
+  manualPlacement=false;
+  const hint=document.getElementById('manualHint');
+  const btn=document.getElementById('placeManualBtn');
+  btn.disabled=true;
+  hint.textContent='🔎 A cím automatikus keresése folyamatban…';
+  try{
+    const p=await geocode(a);
+    const item={num:manualNextNumber++,address:a,lat:Number(p.lat),lon:Number(p.lon)};
+    manualPoints.push(item); saveManual(); renderManual();
+    document.getElementById('manualAddress').value='';
+    hint.textContent='✅ A címet automatikusan megtaláltam és felrajzoltam. Ha nem pontos, töröld és helyezd el kézzel.';
+  }catch(e){
+    manualPlacement=true;
+    hint.textContent='⚠️ Nem találtam megbízható automatikus találatot. Most kattints a térképen a pontos helyre.';
+  }finally{
+    btn.disabled=false;
+  }
+});
+map.on('click',e=>{
+  if(!manualPlacement)return;
+  const p={num:manualNextNumber++,address:manualPendingAddress,lat:e.latlng.lat,lon:e.latlng.lng};
+  manualPoints.push(p); saveManual(); renderManual();
+  manualPlacement=false; manualPendingAddress='';
+  document.getElementById('manualAddress').value='';
+  document.getElementById('manualHint').textContent='A pont elhelyezve.';
+});
+
+const geoCache=JSON.parse(localStorage.getItem('isaszeg_geocode_cache_v1')||'{}');
+function cacheKey(a){return a.toLowerCase().replace(/\s+/g,' ').trim();}
+async function geocode(address){
+  const key=cacheKey(address);
+  if(geoCache[key]) return geoCache[key];
+  // Elsőként Photon: OSM-adatokra épül, de nem a Nominatim böngészős korlátozását használja.
+  const q=encodeURIComponent(address+', 2117 Isaszeg, Hungary');
+  const photon='https://photon.komoot.io/api/?q='+q+'&limit=5&bbox=19.34,47.47,19.49,47.59';
+  try{
+    const r=await fetch(photon);
+    if(r.ok){
+      const d=await r.json();
+      const good=(d.features||[]).find(f=>{
+        const pr=f.properties||{};
+        return /Isaszeg/i.test((pr.city||pr.town||pr.village||'')) &&
+               (!pr.housenumber || /\d/.test(pr.housenumber));
+      });
+      if(good){
+        const c=good.geometry.coordinates;
+        const result={lat:Number(c[1]),lon:Number(c[0])};
+        geoCache[key]=result; localStorage.setItem('isaszeg_geocode_cache_v1',JSON.stringify(geoCache));
+        return result;
+      }
+    }
+  }catch(e){}
+  // Nominatim csak tartalék, egyetlen kérés/cím.
+  const nu='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=hu&viewbox=19.34,47.59,19.49,47.47&q='+encodeURIComponent(address+', Isaszeg, Hungary');
+  try{
+    const r=await fetch(nu);
+    if(r.ok){
+      const d=await r.json();
+      const good=d.find(x=>/Isaszeg/i.test(x.display_name||''));
+      if(good){
+        const result={lat:Number(good.lat),lon:Number(good.lon)};
+        geoCache[key]=result; localStorage.setItem('isaszeg_geocode_cache_v1',JSON.stringify(geoCache));
+        return result;
+      }
+    }
+  }catch(e){}
+  throw Error('Nincs megbízható találat');
+}
+(async()=>{
+ for(let i=0;i<addresses.length;i++){
+   try{
+     const p=await geocode(addresses[i]);
+     addPoint(Number(p.lat),Number(p.lon),nums[i],addresses[i]);
+   }catch(e){failed.push([nums[i],addresses[i]])}
+   done++;
+   document.getElementById('status').textContent='Geokódolás: '+done+' / '+addresses.length;
+   await new Promise(r=>setTimeout(r,850));
+ }
+ if(bounds.length)map.fitBounds(bounds,{paddingTopLeft:[25,25],paddingBottomRight:[370,25]});
+ const failedBox=document.getElementById('failed');
+ const failedTitle=document.getElementById('failedTitle');
+ if(failed.length){
+   failedTitle.style.display='block';
+   failedBox.innerHTML=failed.map(x=>'<div><b>'+x[0]+'.</b> '+x[1]+' – <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(x[1]+', Isaszeg, Hungary')+'">megnyitás Google Térképen</a></div>').join('');
+   document.getElementById('status').innerHTML='Kész: '+bounds.length+' pont. <b>'+failed.length+' cím kézi ellenőrzést igényel.</b>';
+ }else{
+   document.getElementById('status').innerHTML='Kész: mind a '+bounds.length+' cím felrajzolva. <b>Nincs ellenőrizendő tétel.</b>';
+ }
+})();
+</script>
+</body>
+</html>
