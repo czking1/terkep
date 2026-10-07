@@ -28,7 +28,7 @@ html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif}
 #panel h2{font-size:14px;margin:12px 0 7px}
 .addr{font-size:12px;line-height:1.55}
 .manual-box{margin-top:10px;padding:9px;background:#f7f7f7;border:1px solid #ddd;border-radius:6px}.manual-box button{cursor:pointer;border:1px solid #aaa;background:#fff;border-radius:4px;padding:5px 8px;margin:3px 3px 3px 0}.manual-box input{width:100%;padding:6px;border:1px solid #bbb;border-radius:4px;margin:5px 0}.manual-item{font-size:12px;line-height:1.45;padding:5px 0;border-bottom:1px solid #ddd}.manual-item:last-child{border-bottom:0}.manual-delete{color:#b51218!important}.existing-delete{cursor:pointer;border:1px solid #aaa;background:#fff;border-radius:4px;padding:2px 6px;margin-left:6px;color:#b51218}
-.status{font-size:12px;padding:7px 9px;background:#f4f4f4;border-radius:5px}.failed{font-size:12px;line-height:1.5}.failed a{color:#b51218;text-decoration:none}.failed a:hover{text-decoration:underline}
+.status{font-size:12px;padding:7px 9px;background:#f4f4f4;border-radius:5px}.shared-box{margin-top:10px;padding:9px;background:#eef6ff;border:1px solid #b9d8f5;border-radius:6px}.shared-box button{cursor:pointer;border:1px solid #8aaec9;background:#fff;border-radius:4px;padding:5px 8px;margin:3px 3px 3px 0}.shared-box input{width:100%;padding:6px;border:1px solid #bbb;border-radius:4px;margin:5px 0}.shared-status{font-size:11px;line-height:1.45;margin-top:4px}.failed{font-size:12px;line-height:1.5}.failed a{color:#b51218;text-decoration:none}.failed a:hover{text-decoration:underline}
 @media print{
   @page{size:A4 landscape;margin:0}
   #panel{position:absolute;right:8mm;top:8mm;width:78mm;max-height:180mm;box-shadow:none;border:1px solid #bbb}
@@ -42,6 +42,12 @@ html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif}
 <div id="panel">
 <h1>Isaszeg – eredeti címlista</h1>
 <div class="status" id="status">A 33 cím pontos geokódolása folyamatban…</div>
+<div class="shared-box">
+  <b>🌐 Közös térképadatok</b>
+  <div style="font-size:11px;margin-top:3px">A mozgatások, törlések és új pontok közös mentése mindenki számára látható.</div>
+  <button id="sharedSaveBtn">💾 Közös mentés</button>
+  <div class="shared-status" id="sharedStatus">Közös adatkapcsolat beállítása szükséges.</div>
+</div>
 <div class="manual-box">
   <button id="addManualBtn">➕ Új cím hozzáadása</button>
   <div id="manualForm" style="display:none">
@@ -58,7 +64,44 @@ html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif}
 <div id="failed" class="failed"></div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+
+// ===================== FIREBASE BEÁLLÍTÁS =====================
+// A Firebase konzolból kapott adatokat ide kell bemásolni.
+const firebaseConfig = {
+  apiKey: "AIzaSyC8K8L-ex17t-YFxQZuYPYv0jKZ-fLTZGk",
+  authDomain: "isaszegterkep.firebaseapp.com",
+  projectId: "isaszegterkep",
+  storageBucket: "isaszegterkep.firebasestorage.app",
+  messagingSenderId: "281753218765",
+  appId: "1:281753218765:web:650fc7c14ef7aced344384",
+  measurementId: "G-SNB751E8SG"
+};
+const firebaseConfigured = !firebaseConfig.apiKey.startsWith("IDE_");
+let db=null, auth=null, currentUser=null;
+let firebaseReady=Promise.resolve();
+if(firebaseConfigured){
+  try{
+    const app=initializeApp(firebaseConfig);
+    db=getFirestore(app);
+    auth=getAuth(app);
+    firebaseReady=signInAnonymously(auth).then(userCredential=>{
+      currentUser=userCredential.user;
+      updateSharedAuthUI();
+      return currentUser;
+    }).catch(e=>{
+      console.error(e);
+      updateSharedAuthUI();
+      return null;
+    });
+  }catch(e){
+    console.error(e);
+  }
+}
+
 const addresses=[
 'Őzgida utca 19','Március 15. utca 7','Pozsonyi utca 9','Bartók Béla utca 5',
 'Templom utca 35','Damjanich utca 14','Dózsa György utca 46','Kossuth Lajos utca 88',
@@ -105,6 +148,64 @@ let manualNextNumber=Math.max(...nums,0)+1;
 const manualLayer=L.layerGroup().addTo(map);
 function esc(s){return String(s).replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));}
 function saveManual(){localStorage.setItem(manualKey,JSON.stringify(manualPoints));}
+function updateSharedAuthUI(){
+  const st=document.getElementById('sharedStatus');
+  if(!firebaseConfigured){
+    st.textContent='⚙️ A Firebase beállítása még nincs elvégezve.';
+  }else if(currentUser){
+    st.textContent='✅ Kapcsolódva a közös térképhez. Nincs szükség bejelentkezésre.';
+  }else{
+    st.textContent='⏳ Kapcsolódás a közös adatokhoz…';
+  }
+}
+
+async function loadSharedState(){
+  if(!firebaseConfigured || !db) return;
+  try{
+    const snap=await getDoc(doc(db,'maps','isaszeg'));
+    if(snap.exists()){
+      const d=snap.data();
+      deletedPoints=Array.isArray(d.deleted)?d.deleted.map(Number):[];
+      deletedSet.clear(); deletedPoints.forEach(n=>deletedSet.add(n));
+      Object.keys(movedPoints).forEach(k=>delete movedPoints[k]);
+      Object.assign(movedPoints, d.moved||{});
+      manualPoints=Array.isArray(d.manual)?d.manual:[];
+      manualNextNumber=Math.max(...nums,...manualPoints.map(p=>Number(p.num)||0),0)+1;
+      saveDeleted(); saveMoved(); saveManual();
+      renderExistingList(); renderManual();
+      document.getElementById('sharedStatus').textContent='☁️ A közös állapot betöltve.';
+    }else{
+      document.getElementById('sharedStatus').textContent='☁️ Még nincs közös mentés; ez lesz az első.';
+    }
+  }catch(e){
+    console.error(e);
+    document.getElementById('sharedStatus').textContent='⚠️ A közös adatok betöltése nem sikerült: '+(e.message||e);
+  }
+}
+
+async function saveSharedState(){
+  if(!firebaseConfigured || !db){alert('Előbb állítsd be a Firebase-t az index.html tetején.');return;}
+  if(!currentUser){alert('A közös kapcsolat még nem áll készen. Próbáld meg pár másodperc múlva.');return;}
+  const btn=document.getElementById('sharedSaveBtn');
+  btn.disabled=true;
+  try{
+    await setDoc(doc(db,'maps','isaszeg'),{
+      moved:movedPoints,
+      deleted:deletedPoints,
+      manual:manualPoints,
+      updatedAt:serverTimestamp(),
+      updatedBy:currentUser.uid
+    });
+    document.getElementById('sharedStatus').textContent='✅ Elmentve közösen. Mostantól mindenki ezt az állapotot látja.';
+  }catch(e){
+    console.error(e);
+    document.getElementById('sharedStatus').textContent='⚠️ Mentési hiba: '+(e.message||e);
+  }finally{btn.disabled=false;}
+}
+
+document.getElementById('sharedSaveBtn').addEventListener('click',saveSharedState);
+
+
 function addManualMarker(p){
   const dot=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[8,8],iconAnchor:[4,4]})}).addTo(manualLayer);
   const label=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="marker-label">'+p.num+'</div>',iconSize:[32,29],iconAnchor:[-7,36]})}).addTo(manualLayer);
@@ -245,6 +346,9 @@ async function geocode(address){
   throw Error('Nincs megbízható találat');
 }
 (async()=>{
+ updateSharedAuthUI();
+ await firebaseReady;
+ await loadSharedState();
  for(let i=0;i<addresses.length;i++){
    try{
      const p=await geocode(addresses[i]);
