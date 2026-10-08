@@ -84,38 +84,19 @@ const firebaseConfigured = !firebaseConfig.apiKey.startsWith("IDE_");
 let db=null, auth=null, currentUser=null;
 let firebaseReady=Promise.resolve();
 if(firebaseConfigured){
-  tjavascript
+  try{
     const app=initializeApp(firebaseConfig);
     db=getFirestore(app);
     auth=getAuth(app);
-firebaseReady = signInAnonymously(auth)
-  .then(userCredential => {
-    currentUser = userCredential.user;
-    updateSharedAuthUI();
-    return currentUser;
-  })
-  .catch(e => {
-    console.error('FIREBASE ANONIM BEJELENTKEZÉSI HIBA:', e);
-
-    const st = document.getElementById('sharedStatus');
-
-    if (st) {
-      st.textContent =
-        '❌ Firebase bejelentkezési hiba: ' +
-        (e.code || e.message || e);
-    }
-
-    return null;
-  });      currentUser=userCredential.user;
+    firebaseReady=signInAnonymously(auth).then(userCredential=>{
+      currentUser=userCredential.user;
       updateSharedAuthUI();
       return currentUser;
-  }).catch(e=>{
-  console.error('FIREBASE ANONIM BEJELENTKEZÉSI HIBA:', e);
-  document.getElementById('sharedStatus').textContent =
-    '❌ Firebase bejelentkezési hiba: ' + (e.code || e.message || e);
-  updateSharedAuthUI();
-  return null;
-});
+    }).catch(e=>{
+      console.error(e);
+      updateSharedAuthUI();
+      return null;
+    });
   }catch(e){
     console.error(e);
   }
