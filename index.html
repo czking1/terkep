@@ -70,7 +70,6 @@ import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 
 // ===================== FIREBASE BEÁLLÍTÁS =====================
-// A Firebase konzolból kapott adatokat ide kell bemásolni.
 const firebaseConfig = {
   apiKey: "AIzaSyDwV5snQvx1OkSWZpPHpCimC-U1bkL1hmE",
   authDomain: "isaszegterkep.firebaseapp.com",
@@ -83,22 +82,34 @@ const firebaseConfig = {
 const firebaseConfigured = !firebaseConfig.apiKey.startsWith("IDE_");
 let db=null, auth=null, currentUser=null;
 let firebaseReady=Promise.resolve();
+
 if(firebaseConfigured){
   try{
     const app=initializeApp(firebaseConfig);
     db=getFirestore(app);
     auth=getAuth(app);
-    firebaseReady=signInAnonymously(auth).then(userCredential=>{
-      currentUser=userCredential.user;
-      updateSharedAuthUI();
-      return currentUser;
-    }).catch(e=>{
-      console.error(e);
-      updateSharedAuthUI();
-      return null;
-    });
+
+    firebaseReady=signInAnonymously(auth)
+      .then(userCredential=>{
+        currentUser=userCredential.user;
+        updateSharedAuthUI();
+        return currentUser;
+      })
+      .catch(e=>{
+        console.error('FIREBASE ANONIM BEJELENTKEZÉSI HIBA:',e);
+        const st=document.getElementById('sharedStatus');
+        if(st){
+          st.textContent='❌ Firebase bejelentkezési hiba: '+(e.code||e.message||e);
+        }
+        return null;
+      });
+
   }catch(e){
-    console.error(e);
+    console.error('FIREBASE INDÍTÁSI HIBA:',e);
+    const st=document.getElementById('sharedStatus');
+    if(st){
+      st.textContent='❌ Firebase indítási hiba: '+(e.code||e.message||e);
+    }
   }
 }
 
@@ -160,7 +171,7 @@ function updateSharedAuthUI(){
 }
 
 async function loadSharedState(){
-  if(!firebaseConfigured || !db) return;
+  if(!firebaseConfigured || !db || !currentUser) return;
   try{
     const snap=await getDoc(doc(db,'maps','isaszeg'));
     if(snap.exists()){
@@ -168,7 +179,7 @@ async function loadSharedState(){
       deletedPoints=Array.isArray(d.deleted)?d.deleted.map(Number):[];
       deletedSet.clear(); deletedPoints.forEach(n=>deletedSet.add(n));
       Object.keys(movedPoints).forEach(k=>delete movedPoints[k]);
-      Object.assign(movedPoints, d.moved||{});
+      Object.assign(movedPoints,d.moved||{});
       manualPoints=Array.isArray(d.manual)?d.manual:[];
       manualNextNumber=Math.max(...nums,...manualPoints.map(p=>Number(p.num)||0),0)+1;
       saveDeleted(); saveMoved(); saveManual();
@@ -205,12 +216,30 @@ async function saveSharedState(){
 
 document.getElementById('sharedSaveBtn').addEventListener('click',saveSharedState);
 
-
 function addManualMarker(p){
-  const dot=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[8,8],iconAnchor:[4,4]})}).addTo(manualLayer);
-  const label=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:'<div class="marker-label">'+p.num+'</div>',iconSize:[32,29],iconAnchor:[-7,36]})}).addTo(manualLayer);
-  dot.bindPopup('<b>'+esc(p.num)+'. '+esc(p.address)+'</b><br>Manuálisan elhelyezve');
-  label.bindPopup('<b>'+esc(p.num)+'. '+esc(p.address)+'</b><br>Manuálisan elhelyezve');
+  const dot=L.marker([p.lat,p.lon],{
+    icon:L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[8,8],iconAnchor:[4,4]})
+  }).addTo(manualLayer);
+  const label=L.marker([p.lat,p.lon],{
+    icon:L.divIcon({className:'',html:'<div class="marker-label">'+p.num+'</div>',iconSize:[32,29],iconAnchor:[-7,36]}),
+    draggable:true,
+    autoPan:true
+  }).addTo(manualLayer);
+  const updatePosition=()=>{
+    const pos=label.getLatLng();
+    dot.setLatLng(pos);
+    p.lat=pos.lat;
+    p.lon=pos.lng;
+    saveManual();
+  };
+  label.on('drag',updatePosition);
+  label.on('dragend',()=>{
+    updatePosition();
+    const st=document.getElementById('sharedStatus');
+    st.textContent='📍 A '+p.num+'. pont új helye rögzítve ezen az eszközön. A többieknek a „Közös mentés” gombbal válik láthatóvá.';
+  });
+  dot.bindPopup('<b>'+esc(p.num)+'. '+esc(p.address)+'</b><br>Manuálisan elhelyezve<br><small>↔ A számozott jelölő húzható.</small>');
+  label.bindPopup('<b>'+esc(p.num)+'. '+esc(p.address)+'</b><br>Manuálisan elhelyezve<br><small>↔ Húzd a jelölőt a megfelelő helyre, majd nyomd meg a Közös mentés gombot.</small>');
   return [dot,label];
 }
 function renderManual(){
@@ -231,7 +260,6 @@ renderManual();
 function addPoint(lat,lon,n,address){
  if(deletedSet.has(n)) return;
 
- // Korábban kézzel áthelyezett pont esetén az elmentett pozíciót használjuk.
  if(movedPoints[n]){
    lat=Number(movedPoints[n].lat);
    lon=Number(movedPoints[n].lon);
@@ -309,7 +337,6 @@ function cacheKey(a){return a.toLowerCase().replace(/\s+/g,' ').trim();}
 async function geocode(address){
   const key=cacheKey(address);
   if(geoCache[key]) return geoCache[key];
-  // Elsőként Photon: OSM-adatokra épül, de nem a Nominatim böngészős korlátozását használja.
   const q=encodeURIComponent(address+', 2117 Isaszeg, Hungary');
   const photon='https://photon.komoot.io/api/?q='+q+'&limit=5&bbox=19.34,47.47,19.49,47.59';
   try{
@@ -329,7 +356,6 @@ async function geocode(address){
       }
     }
   }catch(e){}
-  // Nominatim csak tartalék, egyetlen kérés/cím.
   const nu='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=hu&viewbox=19.34,47.59,19.49,47.47&q='+encodeURIComponent(address+', Isaszeg, Hungary');
   try{
     const r=await fetch(nu);
@@ -345,6 +371,7 @@ async function geocode(address){
   }catch(e){}
   throw Error('Nincs megbízható találat');
 }
+
 (async()=>{
  updateSharedAuthUI();
  await firebaseReady;
